@@ -84,8 +84,8 @@ defmodule MCPing do
       {:ok, conn} ->
         try do
           handshake = construct_handshake_packet(address, port) |> pack_data
-          :gen_tcp.send(conn, handshake)
-          :gen_tcp.send(conn, pack_data(<<0>>))
+          :ok = :gen_tcp.send(conn, handshake)
+          :ok = :gen_tcp.send(conn, pack_data(<<0>>))
 
           # Ignore the returned packet size
           {:ok, _} = unpack_varint(conn, timeout)
