@@ -37,6 +37,10 @@ defmodule MCPing do
       <<0x01>>
   end
 
+  defp construct_ping_packet(random) do
+    <<0x01>> <> <<random::big-signed-64>>
+  end
+
   defp unpack_varint(conn, timeout) do
     unpack_varint(conn, 0, 0, timeout)
   end
@@ -44,6 +48,7 @@ defmodule MCPing do
   defp unpack_varint(conn, d, n, timeout) do
     with {:ok, <<b>>} = :gen_tcp.recv(conn, 1, timeout) do
       a = bor(d, (b &&& 0x7F) <<< (7 * n))
+
       cond do
         (b &&& 0x80) == 0 ->
           {:ok, a}
@@ -73,28 +78,41 @@ defmodule MCPing do
     timeout = Keyword.get(options, :timeout, 3000)
     protocol_version = Keyword.get(options, :protocol_version, @default_protocol_version)
 
-    with {:ok, conn} <- :gen_tcp.connect(address_chars, port, [:binary, active: false], timeout),
-         # Send the handshake and the ping packet in one send
-         handshake <- construct_handshake_packet(address, port, protocol_version) |> pack_data,
-         :ok <- :gen_tcp.send(conn, handshake <> <<0x01, 0x0>>),
+    case :gen_tcp.connect(
+           address_chars,
+           port,
+           [:binary, active: false, send_timeout: timeout],
+           timeout
+         ) do
+      {:ok, conn} ->
+        try do
+          with handshake <-
+                 construct_handshake_packet(address, port, protocol_version) |> pack_data,
+               :ok <- :gen_tcp.send(conn, handshake <> <<0x01, 0x0>>),
 
-         # Ignore the returned packet size for the ping. Assert that the packet ID is expected,
-         # and then read the ping data and deserialize the server ping as JSON.
-         {:ok, _} <- unpack_varint(conn, timeout),
-         {:ok, 0x00} <- unpack_varint(conn, timeout),
-         {:ok, json_size} <- unpack_varint(conn, timeout),
-         {:ok, raw_ping} <- :gen_tcp.recv(conn, json_size, timeout),
-         {:ok, json_ping} <- raw_ping |> :erlang.iolist_to_binary() |> Jason.decode(),
+               # Ignore the returned packet size for the ping. Assert that the packet ID is expected,
+               # and then read the ping data and deserialize the server ping as JSON.
+               {:ok, _} <- unpack_varint(conn, timeout),
+               {:ok, 0x00} <- unpack_varint(conn, timeout),
+               {:ok, json_size} <- unpack_varint(conn, timeout),
+               {:ok, raw_ping} <- :gen_tcp.recv(conn, json_size, timeout),
+               {:ok, json_ping} <- Jason.decode(raw_ping),
 
-         # Send a ping packet
-         pinged_at <- :os.system_time(:millisecond),
-         :ok <- :gen_tcp.send(conn, <<0x09, 0x01>> <> <<pinged_at::big-signed-64>>),
-         {:ok, 0x09} <- unpack_varint(conn, timeout),
-         {:ok, 0x01} <- unpack_varint(conn, timeout),
-         {:ok, _} <- :gen_tcp.recv(conn, 8, timeout),
-         ponged_at <- :os.system_time(:millisecond),
-         :ok <- :gen_tcp.close(conn) do
-      {:ok, Map.put(json_ping, "ping", ponged_at - pinged_at)}
+               # Send a ping packet
+               pinged_at <- :erlang.monotonic_time(:millisecond),
+               :ok <- :gen_tcp.send(conn, construct_ping_packet(pinged_at) |> pack_data),
+               {:ok, 0x09} <- unpack_varint(conn, timeout),
+               {:ok, 0x01} <- unpack_varint(conn, timeout),
+               {:ok, _} <- :gen_tcp.recv(conn, 8, timeout),
+               ponged_at <- :erlang.monotonic_time(:millisecond) do
+            {:ok, Map.put(json_ping, "ping", ponged_at - pinged_at)}
+          end
+        after
+          :gen_tcp.close(conn)
+        end
+
+      {:error, err} ->
+        {:error, err}
     end
   end
 end

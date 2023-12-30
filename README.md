@@ -28,7 +28,7 @@ This package can be installed by adding `mcping` to your list of dependencies in
 ```elixir
 def deps do
   [
-    {:mcping, "~> 0.1.0"}
+    {:mcping, "~> 0.2.0"}
   ]
 end
 ```
