@@ -17,6 +17,8 @@ defmodule MCPing.Srv do
       iex> MCPing.Srv.resolve_srv_record("minecraft", "tcp", "mc.example.com", 5000)
       {:error, :nxdomain}
   """
+  @spec resolve_srv_record(String.t(), String.t(), String.t(), non_neg_integer()) ::
+          {:ok, {String.t(), non_neg_integer()}} | {:error, term()}
   def resolve_srv_record(service, protocol, hostname, timeout) do
     case lookup_server(service, protocol, hostname, timeout) do
       {:ok, entries} -> {:ok, hd(entries)}
@@ -24,8 +26,8 @@ defmodule MCPing.Srv do
     end
   end
 
-  @spec lookup_server(binary(), binary(), binary(), :infinity | non_neg_integer()) ::
-          {:error, atom()}
+  @spec lookup_server(String.t(), String.t(), String.t(), non_neg_integer()) ::
+          {:ok, list({String.t(), non_neg_integer()})} | {:error, term()}
   @doc """
   Resolves all SRV records for a given service, protocol, and hostname. Returns a list of all SRV records found,
   sorted by priority order. If a record with a given priority has multiple records with different weights, the
@@ -69,24 +71,27 @@ defmodule MCPing.Srv do
       end)
 
     # Since Erlang maps are unordered, we need to sort the keys to ensure that we always pick the same order of priorities.
-    sorted_priorities = picked_by_priority
+    sorted_priorities =
+      picked_by_priority
       |> Map.keys()
       |> Enum.sort()
 
-    {selected_record_by_priority_reversed, rand_state} = Enum.reduce(sorted_priorities, {[], rand_state}, fn
-      priority, {entries, rand_state} ->
-        {entry, rand_state} = pick_weighted_random_s(picked_by_priority[priority], rand_state)
-        {[entry | entries], rand_state}
-    end)
+    {selected_record_by_priority_reversed, rand_state} =
+      Enum.reduce(sorted_priorities, {[], rand_state}, fn
+        priority, {entries, rand_state} ->
+          {entry, rand_state} = pick_weighted_random_s(picked_by_priority[priority], rand_state)
+          {[entry | entries], rand_state}
+      end)
 
     {Enum.reverse(selected_record_by_priority_reversed), rand_state}
   end
 
   defp pick_weighted_random_s(entries, rand_state) do
-    reweighted = Enum.scan(entries, fn
-      (element, acc) when is_nil(acc) -> element
-      ({weight, port, host}, acc) -> {elem(acc, 0) + weight, port, host}
-     end)
+    reweighted =
+      Enum.scan(entries, fn
+        element, acc when is_nil(acc) -> element
+        {weight, port, host}, acc -> {elem(acc, 0) + weight, port, host}
+      end)
 
     total_weight = List.last(reweighted) |> elem(0)
     {random_weight, next_state} = :rand.uniform_s(total_weight, rand_state)

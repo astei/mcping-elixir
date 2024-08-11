@@ -46,7 +46,9 @@ defmodule MCPing.SrvTest do
       {0, 50, 25567, "s3.example.com"},
       {0, 50, 25568, "s4.example.com"}
     ]
-    state = :rand.seed_s(:exsss, 1)  # different seed, which makes the test pass
+
+    # different seed, which makes the test pass
+    state = :rand.seed_s(:exsss, 1)
     Process.put(:srv_test_state, state)
 
     # At priority 0, we get either s3 or s4 50% of the time, and at priority 1, we get s1 25% of the time and s2 75% of the time.

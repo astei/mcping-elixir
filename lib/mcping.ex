@@ -51,6 +51,7 @@ defmodule MCPing do
        {:ok, ...}
 
   """
+  @spec get_info(String.t(), non_neg_integer(), keyword()) :: {:ok, map()} | {:error, term()}
   def get_info(address, port \\ 25565, options \\ []) do
     timeout = Keyword.get(options, :timeout, @default_timeout)
     {resolved_address, resolved_port} = maybe_resolve_minecraft_srv(address, port, timeout)
