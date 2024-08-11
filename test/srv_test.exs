@@ -6,7 +6,8 @@ defmodule MCPing.SrvTest do
              [{"example.com", 25565}]
   end
 
-  test "will pick the SRV record with the lowest priority first" do
+  test "will sort SRV record with the highest priority first" do
+    # DNS SRV priorities are supported to be checked in ascending order.
     assert MCPing.Srv.find_eligible_srv_records([
              {1, 1, 25566, "s2.example.com"},
              {0, 1, 25565, "s1.example.com"}
