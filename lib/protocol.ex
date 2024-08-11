@@ -58,12 +58,13 @@ defmodule MCPing.Protocol do
   end
 
   def send_handshake_and_status_request_packet(conn, address, port, protocol_version) do
-    contents = [
-      construct_handshake_packet(address, port, protocol_version),
-      construct_status_request_packet()
-    ]
-    |> Enum.map(&pack_data/1)
-    |> Enum.join()
+    contents =
+      [
+        construct_handshake_packet(address, port, protocol_version),
+        construct_status_request_packet()
+      ]
+      |> Enum.map(&pack_data/1)
+      |> Enum.join()
 
     :gen_tcp.send(conn, contents)
   end

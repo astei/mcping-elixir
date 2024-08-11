@@ -17,7 +17,13 @@ defmodule MCPing do
   end
 
   defp ping_server(conn, options) do
-    with :ok <- Protocol.send_handshake_and_status_request_packet(conn, options.virtual_host, options.port, options.protocol_version),
+    with :ok <-
+           Protocol.send_handshake_and_status_request_packet(
+             conn,
+             options.virtual_host,
+             options.port,
+             options.protocol_version
+           ),
          {:ok, ping} <- Protocol.read_status_response_packet(conn, options.timeout),
          pinged_at <- :erlang.monotonic_time(:millisecond),
          :ok <- Protocol.send_status_ping_packet(conn, pinged_at),
@@ -51,7 +57,12 @@ defmodule MCPing do
 
     resolved_options = format_ping_options(address, resolved_port, options)
 
-    case :gen_tcp.connect(resolved_address, resolved_port, [:binary, active: false, send_timeout: timeout, nodelay: true], timeout) do
+    case :gen_tcp.connect(
+           resolved_address,
+           resolved_port,
+           [:binary, active: false, send_timeout: timeout, nodelay: true],
+           timeout
+         ) do
       {:ok, conn} ->
         try do
           case ping_server(conn, resolved_options) do
@@ -61,7 +72,9 @@ defmodule MCPing do
         after
           :gen_tcp.close(conn)
         end
-      {:error, reason} -> {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
