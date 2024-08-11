@@ -1,6 +1,8 @@
 defmodule MCPing.Protocol do
   import Bitwise
 
+  @moduledoc false
+
   #
   # Minecraft data types
   #
@@ -15,6 +17,7 @@ defmodule MCPing.Protocol do
     Varint.LEB128.encode(e)
   end
 
+  @spec pack_data(binary) :: nonempty_binary
   defp pack_data(str) do
     pack_varint(byte_size(str)) <> str
   end

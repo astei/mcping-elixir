@@ -27,7 +27,7 @@ defmodule MCPing.MixProject do
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"},
       {:varint, "~> 1.3"},
       {:jason, "~> 1.4.4"},
-      {:ex_doc, "~> 0.29.4", only: :dev}
+      {:ex_doc, "~> 0.34.2", only: :dev}
     ]
   end
 
