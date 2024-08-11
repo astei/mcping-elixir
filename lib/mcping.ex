@@ -1,69 +1,43 @@
 defmodule MCPing do
-  require Jason
-
-  import Bitwise
+  alias MCPing.Protocol
+  alias MCPing.Srv
 
   @default_protocol_version -1
+  @default_timeout :timer.seconds(3)
 
   @moduledoc """
   A utility library to ping other Minecraft: Java Edition servers.
   """
 
-  @spec pack_varint(integer) :: nonempty_binary
-  defp pack_varint(num) do
-    # We need to reintepret the provided number as an signed integer. Minecraft uses a
-    # variant of Protocol Buffer VarInts where numbers above 2**31-1 are considered signed,
-    # versus ZigZag encoding. Elixir doesn't provide a natural way to coerce a signed-to-unsigned
-    # conversion, so this is what we get.
-    <<e::unsigned-integer-32>> = <<num::signed-integer-32>>
-    Varint.LEB128.encode(e)
+  defp maybe_resolve_minecraft_srv(hostname, specified_port, timeout) do
+    case Srv.resolve_srv_record("minecraft", "tcp", hostname, timeout) do
+      {:ok, {hostname, port}} -> {hostname, port}
+      _ -> {to_charlist(hostname), specified_port}
+    end
   end
 
-  defp pack_port(port) do
-    <<port::signed-16>>
-  end
-
-  defp pack_data(str) do
-    pack_varint(byte_size(str)) <> str
-  end
-
-  defp construct_handshake_packet(address, port, protocol_version) do
-    # Handshake
-    # Next state: status
-    <<0x00>> <>
-      pack_varint(protocol_version) <>
-      pack_data(address) <>
-      pack_port(port) <>
-      <<0x01>>
-  end
-
-  defp construct_ping_packet(random) do
-    <<0x01>> <> <<random::big-signed-64>>
-  end
-
-  defp unpack_varint(conn, timeout) do
-    unpack_varint(conn, 0, 0, timeout)
-  end
-
-  defp unpack_varint(conn, d, n, timeout) do
-    with {:ok, <<b>>} = :gen_tcp.recv(conn, 1, timeout) do
-      a = bor(d, (b &&& 0x7F) <<< (7 * n))
-
-      cond do
-        (b &&& 0x80) == 0 ->
-          {:ok, a}
-
-        n > 4 ->
-          raise("suspicious varint size (tried to read more than 5 bytes)")
-
-        true ->
-          unpack_varint(conn, a, n + 1, timeout)
-      end
+  defp ping_server(conn, options) do
+    with :ok <- Protocol.send_handshake_and_status_request_packet(conn, options.virtual_host, options.port, options.protocol_version),
+         {:ok, ping} <- Protocol.read_status_response_packet(conn, options.timeout),
+         pinged_at <- :erlang.monotonic_time(:millisecond),
+         :ok <- Protocol.send_status_ping_packet(conn, pinged_at),
+         :ok <- Protocol.discard_server_ping_response_packet(conn, options.timeout),
+         ponged_at <- :erlang.monotonic_time(:millisecond) do
+      {:ok, Map.put(ping, "ping", ponged_at - pinged_at)}
     end
   end
 
   @doc """
   Pings a remote Minecraft: Java Edition server.
+
+  ## Parameters
+
+    * `address` - The address of the server to ping.
+    * `port` - The port of the server to ping. Defaults to 25565.
+    * `options` - A keyword list of options:
+      * `:timeout` - The timeout in milliseconds for the connection. Defaults to 3000.
+      * `:protocol_version` - The protocol version to use for the handshake. Defaults to `-1`, whose behavior varies by server. Vanilla servers will typically respond with the version they use, Velocity will assume the latest version of Minecraft, and other servers may have different behavior.
+      * `:virtual_host` - The virtual host to use for the handshake. Defaults to the specified `address`.
 
   ## Examples
 
@@ -72,47 +46,35 @@ defmodule MCPing do
 
   """
   def get_info(address, port \\ 25565, options \\ []) do
-    # gen_tcp uses Erlang strings (charlists), convert this beforehand
-    address_chars = to_charlist(address)
+    timeout = Keyword.get(options, :timeout, @default_timeout)
+    {resolved_address, resolved_port} = maybe_resolve_minecraft_srv(address, port, timeout)
 
-    timeout = Keyword.get(options, :timeout, 3000)
-    protocol_version = Keyword.get(options, :protocol_version, @default_protocol_version)
+    resolved_options = format_ping_options(address, resolved_port, options)
 
-    case :gen_tcp.connect(
-           address_chars,
-           port,
-           [:binary, active: false, send_timeout: timeout],
-           timeout
-         ) do
+    case :gen_tcp.connect(resolved_address, resolved_port, [:binary, active: false, send_timeout: timeout, nodelay: true], timeout) do
       {:ok, conn} ->
         try do
-          with handshake <-
-                 construct_handshake_packet(address, port, protocol_version) |> pack_data,
-               :ok <- :gen_tcp.send(conn, handshake <> <<0x01, 0x0>>),
-
-               # Ignore the returned packet size for the ping. Assert that the packet ID is expected,
-               # and then read the ping data and deserialize the server ping as JSON.
-               {:ok, _} <- unpack_varint(conn, timeout),
-               {:ok, 0x00} <- unpack_varint(conn, timeout),
-               {:ok, json_size} <- unpack_varint(conn, timeout),
-               {:ok, raw_ping} <- :gen_tcp.recv(conn, json_size, timeout),
-               {:ok, json_ping} <- Jason.decode(raw_ping),
-
-               # Send a ping packet
-               pinged_at <- :erlang.monotonic_time(:millisecond),
-               :ok <- :gen_tcp.send(conn, construct_ping_packet(pinged_at) |> pack_data),
-               {:ok, 0x09} <- unpack_varint(conn, timeout),
-               {:ok, 0x01} <- unpack_varint(conn, timeout),
-               {:ok, _} <- :gen_tcp.recv(conn, 8, timeout),
-               ponged_at <- :erlang.monotonic_time(:millisecond) do
-            {:ok, Map.put(json_ping, "ping", ponged_at - pinged_at)}
+          case ping_server(conn, resolved_options) do
+            {:ok, ping} -> {:ok, ping}
+            {:error, reason} -> {:error, reason}
           end
         after
           :gen_tcp.close(conn)
         end
-
-      {:error, err} ->
-        {:error, err}
+      {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp format_ping_options(original_address, port, options) do
+    Enum.into(options, %{
+      # these options can be overridden
+      timeout: @default_timeout,
+      protocol_version: @default_protocol_version,
+      virtual_host: original_address,
+
+      # these... shouldn't be
+      original_address: original_address,
+      port: port
+    })
   end
 end
