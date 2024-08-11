@@ -47,25 +47,16 @@ defmodule MCPing.Srv do
     pick_weighted_random_s(weighted, rand_state)
   end
 
-  defp hd_or_zero([]), do: 0
-  defp hd_or_zero(list), do: hd(list)
-
   defp pick_weighted_random_s(entries, rand_state) do
-    # Accumulate the weights of the entries. We'll need to do this to "normalize" the weights in the provided list.
-    total_weights =
-      Enum.reduce(entries, [], fn {weight, _, _}, acc -> acc ++ [weight + hd_or_zero(acc)] end)
+    reweighted = Enum.scan(entries, fn
+      (element, acc) when is_nil(acc) -> element
+      ({weight, port, host}, acc) -> {elem(acc, 0) + weight, port, host}
+     end)
 
-    total_weight = List.last(total_weights)
-
-    reweighted =
-      Enum.zip_with(entries, total_weights, fn {_, port, host}, total_weight ->
-        {total_weight, port, host}
-      end)
-
+    total_weight = List.last(reweighted) |> elem(0)
     {random_weight, next_state} = :rand.uniform_s(total_weight, rand_state)
 
     {_, port, host} = Enum.find(reweighted, fn {weight, _, _} -> random_weight <= weight end)
-
     {{host, port}, next_state}
   end
 end
